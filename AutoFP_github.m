@@ -1,26 +1,26 @@
-% automatic parcellation: main code portion of MOSI
+% automatic parcellation
+% use 'warn' to search the places that i might need to modify
 % criteria are in line 72 to avoid being replaced while loading variables
-% this code is for internal use by NCI, requiring some modification for different research need
 %%%%%%%%%%%%%%%%%%%%%%%%%%%
 % step I; retrieve time series for each ROI
 % focus on cortex
 %%%%%%%%%%%%%%%%%%%%%%%%%%%
 clear
+cd /home/dwlee/NKI/Rest
 sub=dir('*.results'); % subj dirs
 
-% these regional indices are from the FreeSurfer outputs
 reg = {'frontal_ind','temporal_ind','limbic_ind','parietal_ind','occipital_ind','subcortical_ind','other_ind'};
 lion = {'Fro', 'Tem', 'Lim', 'Par', 'Occ', 'Oth'};
 lion_no = [9 6 10 5 3 2]; % right side subregion number in each lobe/system
 % in each subj folder Fro_1 to Fro_18, first 9 for right, second 9 for left
-%side='right';
-side = 'left';
+side='right';
+%side = 'left';
 
 addpath('~/BrainConnectivityToolBox/2016_01_16_BCT')
 
-for i=1:length(sub) 
+for i=[1:9 11:16] %length(sub) % 1:9, 11:16 (2457957 has big roi, out-of-range error)
     cd(sub(i).name)
-    %mkdir AutoFP
+    mkdir AutoFP
     cd AutoFP
     delete(['parti_*' side '.mat']) % delete saved results, starting from new gammas
     
@@ -38,7 +38,7 @@ for i=1:length(sub)
         badger = cell(1);
         if ~isempty(tmp)
             load(['parti_' num2str(tmp1(tmp(end))) '_' side '.mat']) % load the one prior to current gamma (the MOSI is iterated based on the resutls from previous gamma)
-            clear key key_count badger_1 corr_cri dist_cri voxel_cri mu_cri % badger=cell(1) is replaced by badger, Vin and Min are retained
+            clear key key_count badger_1 corr_cri dist_cri voxel_cri mu_cri % badger=cell(1) is replaced by badger, Vin and Min are retained 
         else
             % to store all the partitions in cells if no parti*.mat - new analysis from lowest gamma
             dim=[]; fid=[];
@@ -69,10 +69,10 @@ for i=1:length(sub)
                 end
             end
         end
-        corr_cri = 0.5; % criteria for average corr
-        %corr_cri2 = 0.7;
+        corr_cri = 0.8; % criteria for average corr
+        %corr_cri2 = 0.7; % if want to set different corr_cri for distance metric and small module combination (line 141)
         dist_cri = 0.05; % criteria for average distance
-        voxel_cri=10; % least voxel size for a roi
+        voxel_cri=10; % smallest voxel size for a module
         mu_cri = 0.95; % criteria for mutual information
         
         key = 1; % to determine whether the loop needs to be terminated
@@ -106,7 +106,7 @@ for i=1:length(sub)
                     tmp=find(M==mo(m));
                     
                     % check whether there are two separate modules in a partition,
-                    % using function contig I write
+                    % using function contig (defined at the end)
                     tp_m=[];
                     tp_m = contig(dim',last_badger{j}(tmp,:)); % tp_m is the linear index of ijk for disconnected sub-modules
                     
@@ -135,7 +135,8 @@ for i=1:length(sub)
             tp_j3=[];
             tp_j3=~cellfun('isempty',badger);
             badger=badger(tp_j3);
-                        
+            
+            
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             % handle the situation less than voxel_cri voxels as a module
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -145,12 +146,12 @@ for i=1:length(sub)
                 if size(badger{j},1) < voxel_cri
                     ov_ind=[ov_ind j];
                 end
-            end
+            end  
             
-            % FIRST STEP: determine whether it is possible to unite small rois in ov_ind
-            if length(ov_ind)>1 % if length(ov_ind)==1, then nothing can be combined
+            % FIRST STEP: determine whether it is possible to unite rois in ov_ind
+            if ~isempty(ov_ind)
                 tp_nei=[];
-                for j=2:length(ov_ind) % filling in lower trianglar of dist_met
+                for j=2:length(ov_ind) % like filling in lower trianglar part of a connectivity matrix
                     for k=1:j-1
                         tk=[];tk_1=[];tk_2=[];
                         tk_1=zeros(dim');
@@ -158,31 +159,27 @@ for i=1:length(sub)
                         tk_1(tk)=1;
                         tk_2=bwconncomp(tk_1);
                         if tk_2.NumObjects == 1
-                            tp_nei=[tp_nei; ov_ind(j) ov_ind(k)]; % the neighboring pairs of the clusters with size less than voxel_cri
+                            tp_nei=[tp_nei; ov_ind(j) ov_ind(k)]; % the neighboring pairs of the clusters with size less than voxel_cri 
                         end
                     end
                 end
                 
-                key1=1; % use a while loop to handle the step 1 combination
-               
-                % combine the neighbors with highest correlation, instead
-                % of combination by chance
+                % combine the neighbors with highest correlation, instead of combination by chance
+                tp_nei=[tp_nei zeros(size(tp_nei,1),1)];
+                
+                for j=1:size(tp_nei,1)
+                    tk_1=[]; tk_2=[];
+                    tk_1=mean(badger{tp_nei(j,1)}(:,4:end),1);
+                    tk_2=mean(badger{tp_nei(j,2)}(:,4:end),1);
+                    tp_nei(j,3)=corr(tk_1',tk_2');
+                end
                 if ~isempty(tp_nei)
-                    tp_nei=[tp_nei zeros(size(tp_nei,1),1)];
-                    for j=1:size(tp_nei,1)
-                        tk_1=[]; tk_2=[];
-                        tk_1=mean(badger{tp_nei(j,1)}(:,4:end),1);
-                        tk_2=mean(badger{tp_nei(j,2)}(:,4:end),1);
-                        tp_nei(j,3)=corr(tk_1',tk_2');
-                    end
-                    
                     tp_nei=sortrows(tp_nei,3,'descend');
                     tp_j1=[]; tp_j1=find(tp_nei(:,3)>corr_cri);
                     tp_nei=tp_nei(tp_j1,:); % only corr > corr_cri are maintained
-                else
-                    key1=0;
-                end                
-              
+                end
+                
+                key1=1; % use a while loop to handle the step 1 combination
                 while key1
                     if isempty(tp_nei)
                         key1=0;
@@ -195,7 +192,7 @@ for i=1:length(sub)
                         tp_j4=find(tp_nei(:,2)==tp_nei(1,2));
                         tp_j3=union(tp_j3,tp_j4);
                         tp_j1=union(tp_j1,tp_j3);
-                        
+
                         badger{tp_nei(1,1)}=[badger{tp_nei(1,1)}; badger{tp_nei(1,2)}];
                         badger{tp_nei(1,2)}=[];
                         
@@ -209,103 +206,91 @@ for i=1:length(sub)
             tp_j3=~cellfun('isempty', badger);
             badger=badger(tp_j3);
             
+            
             % SECOND STEP: the relaitonship between ov_ind and others
-            key1=1; 
-            while key1                
-                ov_ind=[]; % update small roi index (ov: one voxel), referring to badger
-                tmp_badger=[]; tmp_badger=badger;
-                for j=1:length(badger)
-                    if size(badger{j},1) < voxel_cri
-                        ov_ind=[ov_ind j];
-                    end
-                end                
-
-                if ~isempty(ov_ind)
-                    % note: the neighboring indices for dim ijk at voxel x are: x+1,
-                    % x-1, x+i*j, x-i*j, x+i, x-i but i give up this method, i still use bwconncomp to keep consistency
-                    
-                    kk_count=0; % counting isolated module that are detached from other modules
-                    
-                    for j=1:length(ov_ind) % j referred to content of ov_ind
-                        tp_j1=[];
-                        tp_j1=tmp_badger{ov_ind(j)}(:,4:end);
-                        tp_j1=mean(tp_j1,1);
-                        
-                        tp_nei=[]; % storing neighbors of ov_ind{j}
-                        honey=cell(1); honey_ind=0;  % storing the structures of neighboring roi
-                        bee=cell(1); % storing the index/position of neighboring roi
-                        
-                        pollen=[]; % storing the index of ov_ind
-                        pollen=sub2ind(dim,tmp_badger{ov_ind(j)}(:,1),tmp_badger{ov_ind(j)}(:,2),tmp_badger{ov_ind(j)}(:,3));
-                        
-                        for m=setdiff(1:length(tmp_badger),ov_ind) 
-                            tk=[];tk_1=[];tk_2=[];tk_3=[];
-                            tk_1=zeros(dim');
-                            tk_3=sub2ind(dim,tmp_badger{m}(:,1),tmp_badger{m}(:,2),tmp_badger{m}(:,3));
-                            tk=[tk_3; pollen];
-                            tk_1(tk)=1;
-                            tk_2=bwconncomp(tk_1);
-                            
-                            tk_1(pollen)=0; % remove ov_ind, will be used in the next if end
-                            
-                            if tk_2.NumObjects == 1
-                                tp_nei=[tp_nei m];
-                                honey_ind=honey_ind+1;
-                                honey{honey_ind}=tk_1; % store the matrix of neighboring roi
-                                bee{honey_ind}=tk_3; % store the position index of neighbors
-                            end
-                        end
-                        
-                        if ~isempty(tp_nei)
-                            corr_nei=[]; % using correlation to determine which cluster should the small voxle belong to
-                            for k=1:length(tp_nei)
-                                tp_k=[];
-                                tp_k=corr(tp_j1',tmp_badger{tp_nei(k)}(:,4:end)');
-                                if size(tp_k,2)>voxel_cri
-                                    tp_k1=[]; tp_k3=[];
-                                    [tp_k3, tp_k1]=bwdist(honey{k}); % index of nearest neighbor
-                                    tp_k3=tp_k1(pollen); % the nearest voxels in neighboring roi to ov_ind, the content is vector not ijk
-                                    tp_k3=unique(tp_k3);
-                                    [tp_n,tp_n1,tp_n2]=intersect(bee{k},tp_k3); % provindg index of tp_ke in bee/tp_k
-                                    tp_k2=[]; tp_k2=tp_k(tp_n1); % for larger module, only select the highest voxel_cri correlated voxels
-                                    corr_nei=[corr_nei mean(tp_k2)];
-                                else
-                                    corr_nei=[corr_nei mean(tp_k)];
-                                end
-                            end                            
-                            
-                            tp_j2=[]; tp_j3=[];
-                            [tp_j2, tp_j3]=max(corr_nei);
-                            
-                            %if tp_j2 > corr_cri2 % correlation criteria, may delete the loop
-                            badger{tp_nei(tp_j3)}=[badger{tp_nei(tp_j3)}; badger{ov_ind(j)}];
-                            badger{ov_ind(j)}=[];
-                            %end  
-                        else
-                            kk_count=kk_count+1;
-                        end
-                    end
-                    
-                    % delete empty cells
-                    tp_j3=[];
-                    tp_j3=~cellfun('isempty', badger);
-                    badger=badger(tp_j3);
-                    
-                    if length(ov_ind)==kk_count % isolated modules are the only small modules
-                        break
-                    end
-                    
-                else
-                    key1=0;
-                end             
-                                
+            ov_ind=[]; % update small roi index (ov: one voxel), referring to badger
+            tmp_badger=[]; tmp_badger=badger;
+            for j=1:length(badger)
+                if size(badger{j},1) < voxel_cri
+                    ov_ind=[ov_ind j];
+                end
             end
+            
+            if ~isempty(ov_ind)
+                % note: the neighboring indices for dim ijk at voxel x are: x+1,
+                % x-1, x+i*j, x-i*j, x+i, x-i but i give up this method, i still use bwconncomp to keep consistency
+                
+                for j=1:length(ov_ind) % j referred to content of ov_ind
+                    tp_j1=[];
+                    tp_j1=tmp_badger{ov_ind(j)}(:,4:end);
+                    tp_j1=mean(tp_j1,1);
+                    
+                    tp_nei=[]; % storing neighbors of ov_ind{j}
+                    honey=cell(1); honey_ind=0;  % storing the structures of neighboring roi
+                    bee=cell(1); % storing the index/position of neighboring roi
+                    
+                    pollen=[]; % storing the index of ov_ind
+                    pollen=sub2ind(dim,tmp_badger{ov_ind(j)}(:,1),tmp_badger{ov_ind(j)}(:,2),tmp_badger{ov_ind(j)}(:,3));
+                    
+                    for m=setdiff(1:length(tmp_badger),ov_ind) % warn: ov_ind(j) or ov_ind
+                        tk=[];tk_1=[];tk_2=[];tk_3=[];
+                        tk_1=zeros(dim');
+                        tk_3=sub2ind(dim,tmp_badger{m}(:,1),tmp_badger{m}(:,2),tmp_badger{m}(:,3));
+                        tk=[tk_3; pollen];
+                        tk_1(tk)=1;
+                        tk_2=bwconncomp(tk_1);
+                        
+                        tk_1(pollen)=0; % remove ov_ind, will be used in the next if end
+                        
+                        if tk_2.NumObjects == 1
+                            tp_nei=[tp_nei m];
+                            honey_ind=honey_ind+1;
+                            honey{honey_ind}=tk_1; % store the matrix of neighboring roi
+                            bee{honey_ind}=tk_3; % store the index of neighbors
+                        end
+                    end
+                    
+                    corr_nei=[]; % using correlation to determine which cluster should the small voxle belong to
+                    for k=1:length(tp_nei)
+                        tp_k=[];
+                        tp_k=corr(tp_j1',tmp_badger{tp_nei(k)}(:,4:end)');
+                        if size(tp_k,2)>voxel_cri
+                            tp_k1=[]; tp_k3=[];
+                            [tp_k3, tp_k1]=bwdist(honey{k}); % index of nearest neighbor to tp_nei
+                            tp_k3=tp_k1(pollen); % the nearest voxels in neighboring roi to ov_ind, the content is vector not ijk
+                            tp_k3=unique(tp_k3);
+                            [tp_n,tp_n1,tp_n2]=intersect(bee{k},tp_k3); % provindg index of tp_ke in bee/tp_k
+                            tp_k2=[]; tp_k2=tp_k(tp_n1); % for larger module, only select the nearest neighboring voxels (from tp_nei) to the small roi
+                            corr_nei=[corr_nei mean(tp_k2)];
+                        else
+                            corr_nei=[corr_nei mean(tp_k)];
+                        end
+                    end
+                    
+                    if ~isempty(corr_nei) % in case, the small module does not have any contact with setdiff modules (program will halt without if loop)
+                        tp_j2=[]; tp_j3=[];
+                        [tp_j2, tp_j3]=max(corr_nei);
+                        
+                        %if tp_j2 > corr_cri2 % warn: correlation criteria, may delete the loop
+                        badger{tp_nei(tp_j3)}=[badger{tp_nei(tp_j3)}; badger{ov_ind(j)}];
+                        badger{ov_ind(j)}=[];
+                        %end
+                    end
+                end
+            end
+            
+            % delete empty cells
+            tp_j3=[];
+            tp_j3=~cellfun('isempty', badger);
+            badger=badger(tp_j3);
+            
+            
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             % call a function to store the partitions
             % the next section is for uniting similar modules into 1 module
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             
-            parti = conn_cells(badger,dim'); % this badger has been updated
+            parti = conn_cells(badger,dim'); % this badger has been updated; conn_cells is a function (defined at the end)
             
             % determine whether some modules need to be united into a bigger one
             % by comparing the value of averge corr with the dist_cri
@@ -327,7 +312,7 @@ for i=1:length(sub)
                 tp_j2=corr(mean(badger{tp_i2(j)}(:,4:end),1)',raw_data);
                 %             tp_j1=atanh(tp_j1); % fisher's transformation
                 %             tp_j2=atanh(tp_j2);
-                tp_nei(j,3)=0.5*sqrt(sumsqr((tp_j1-tp_j2).*(w_data/sum(w_data)))); % normalization; 0.5 is bcz max 2 min 0
+                tp_nei(j,3)=sqrt(sumsqr((tp_j1-tp_j2).*(w_data/sum(w_data)))); % normalization
             end
             
             if ~isempty(tp_nei)
@@ -353,7 +338,7 @@ for i=1:length(sub)
                     badger{tp_nei(1,1)}=[badger{tp_nei(1,1)}; badger{tp_nei(1,2)}];
                     badger{tp_nei(1,2)}=[];
                     
-                    tp_nei(tp_j1,:)=[]; % remove the relevant rows
+                    tp_nei(tp_j1,:)=[]; % remove the relevant rows                   
                 end
             end
             
@@ -361,17 +346,15 @@ for i=1:length(sub)
             tp_j3=~cellfun('isempty',badger);
             badger=badger(tp_j3);
             
-            key_count=key_count+1 % after a splitting and unifying cycle
-            kiki=[num2str(length(badger)) '/' num2str(length(last_badger))]
+            key_count=key_count+1; % after a splitting and unifying cycle
             
-            % calculate the similarity of partition of badger and last_badger if key_count > 50
-            %
-            badger_1=[]; badger_2=[]; %tmp_badger=[]; % storing the voxel number of badger{j}
+            % calculate the similarity of partition of badger and last_badger
+            badger_1=[]; badger_2=[]; tmp_badger=[]; % storing the voxel number of badger{j}
             for j=1:length(badger)
                 tp_m1=[];
                 tp_m1=sub2ind(dim,badger{j}(:,1),badger{j}(:,2),badger{j}(:,3));
-                badger_1=[badger_1; tp_m1 ones(length(tp_m1),1)*j];
-                %tmp_badger=[tmp_badger size(badger{j},1)];
+                badger_1=[badger_1; tp_m1 ones(length(tp_m1),1)*j];                
+                tmp_badger=[tmp_badger size(badger{j},1)];
             end
             badger_1=sortrows(badger_1,1); % sorting according to first column (position vector)
             for j=1:length(last_badger)
@@ -382,11 +365,9 @@ for i=1:length(sub)
             badger_2=sortrows(badger_2,1); % so, the position of badger_1 and badger_2 are aligned
             
             Vin=[]; Min=[];
-            [Vin, Min]=partition_distance(badger_1(:,2),badger_2(:,2))
+            [Vin, Min]=partition_distance(badger_1(:,2),badger_2(:,2));
             if Min > mu_cri && abs(length(badger)-length(last_badger))<= ceil(0.01*length(badger))
-                if key_count>50 || Min>0.99
-                    key=0;
-                end
+                key=0;
             end
             %end
             
@@ -395,17 +376,10 @@ for i=1:length(sub)
             else
                 badger=badger(randperm(numel(badger))); % permutation of badger order
             end
-            
-            % exclude the condition that badger has a module with less than
-            % 5 voxels but badger = last_badger or Min < mu_cri
-            %             tmp_badger=find(tmp_badger<5);
-            %             if ~isempty(tmp_badger)
-            %                 key=1;
-            %             end
-            
+
         end
         time=toc;
-        eval(['save parti_' num2str(gamma) '_' side '.mat badger badger_1 dim Vin Min corr_cri dist_cri voxel_cri mu_cri key_count time'])
+        eval(['save parti_' num2str(gamma) '_' side '.mat badger badger_1 dim Vin Min corr_cri dist_cri voxel_cri mu_cri key_count time'])        
     end
     cd ..
     cd ..
@@ -438,7 +412,6 @@ for i=2:length(b) % lower triangle
     end
 end
 end
-
 
 % check contiguity
 function a = contig(c,d)
