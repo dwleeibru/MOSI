@@ -18,7 +18,7 @@ side='right';
 
 addpath('~/BrainConnectivityToolBox/2016_01_16_BCT')
 
-for i=[1:9 11:16] %length(sub) % 1:9, 11:16 (2457957 has big roi, out-of-range error)
+for i=1:33 %length(sub)
     cd(sub(i).name)
     mkdir AutoFP
     cd AutoFP
